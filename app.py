@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-BIB_FILE = "example-bib-tiff.json"
+BIB_FILE = "example-bib-new.json"
 
 def load_data():
     """Load bibliography data from JSON file. STRICT MODE: File must exist."""
