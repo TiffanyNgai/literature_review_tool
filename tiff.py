@@ -204,7 +204,7 @@ with st.sidebar:
             "Gemini API Key",
             value=st.session_state.user_api_key,
             type="password",
-            placeholder="Paste your API Key",
+            placeholder="Paste your Google AI Studio Key",
             help="Required for AI features. Key is not saved to disk."
         )
 
@@ -305,8 +305,14 @@ if page_view == "Search Library":
     with c_search:
         if "search_query" not in st.session_state:
             st.session_state.search_query = ""
-        search_query = st.text_input("Keywords, authors, or titles", value=st.session_state.search_query)
-        st.session_state.search_query = search_query
+            
+        # UPDATED: Use 'key' to bind directly to session state. 
+        # Removed manual 'value' assignment and manual state update to prevent overwrite bugs.
+        search_query = st.text_input(
+            "Keywords, authors, or titles", 
+            key="search_query",
+            placeholder="Try searching for 'cognitive drift' or 'neural networks'"
+        )
     with c_sort:
         sort_option = st.selectbox("Sort by", ["Relevance", "Year (Newest)", "Year (Oldest)", "Citations (Most)"])
 
