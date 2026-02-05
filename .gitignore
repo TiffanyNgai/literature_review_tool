@@ -1,1 +1,6 @@
+<<<<<<< HEAD
 .env
+=======
+.env
+.venv/
+>>>>>>> 8e9e5b3 (old files)
