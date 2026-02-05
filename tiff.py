@@ -22,12 +22,6 @@ load_dotenv()
 
 BIB_FILE = "example-bib-tiff.json"
 
-# Initialize GenAI Client
-try:
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-except Exception:
-    client = None 
-
 def load_data():
     """Load bibliography data from JSON file. STRICT MODE: File must exist."""
     if not os.path.exists(BIB_FILE):
@@ -50,25 +44,41 @@ if "saved_papers" not in st.session_state:
     st.session_state.saved_papers = set()
 if "expanded_abstracts" not in st.session_state:
     st.session_state.expanded_abstracts = set()
+if "user_api_key" not in st.session_state:
+    st.session_state.user_api_key = ""
 
 # --- GEMINI API INTEGRATION ---
-def call_gemini(prompt):
-    if not client:
-         return "Error: GEMINI_API_KEY not found. Please set it in your .env file."
+def get_api_key():
+    """Helper to get API key from env or session."""
+    return os.getenv("GEMINI_API_KEY") or st.session_state.user_api_key
 
-    # Exponential backoff implementation
-    for delay in [1, 4]:
-        try:
-            response = client.models.generate_content(
-                model="gemini-3-pro-preview",
-                contents=prompt
-            )
-            if hasattr(response, 'text'):
-                return response.text
-            else:
-                 return "Error: No text in response."
-        except Exception as e:
-            time.sleep(delay)
+def call_gemini(prompt):
+    api_key = get_api_key()
+    
+    if not api_key:
+         return "Error: API Key missing. Please enter it in the interface."
+
+    try:
+        # Initialize client dynamically with the available key
+        client = genai.Client(api_key=api_key)
+        
+        # Exponential backoff implementation
+        for delay in [1, 4]:
+            try:
+                response = client.models.generate_content(
+                    model="gemini-3-pro-preview",
+                    contents=prompt
+                )
+                if hasattr(response, 'text'):
+                    return response.text
+                else:
+                    return "Error: No text in response."
+            except Exception as e:
+                time.sleep(delay)
+                
+    except Exception as e:
+        return f"Error initializing AI client: {str(e)}"
+        
     return "Error: Could not reach AI services."
 
 # --- UI COMPONENTS ---
@@ -183,6 +193,22 @@ with st.sidebar:
         except Exception as e:
             st.warning("Could not render citation graph. Ensure Graphviz is installed.")
 
+    st.divider()
+    
+    # 3. API Key Settings
+    st.subheader("🔑 API Settings")
+    if os.getenv("GEMINI_API_KEY"):
+        st.success("✅ API Key loaded from environment")
+    else:
+        st.session_state.user_api_key = st.text_input(
+            "Gemini API Key",
+            value=st.session_state.user_api_key,
+            type="password",
+            placeholder="Paste your API Key",
+            help="Required for AI features. Key is not saved to disk."
+        )
+
+
 # --- MAIN CONTENT AREA ---
 
 # Helper to render a single document card
@@ -233,26 +259,30 @@ def render_document(doc, show_ai_options):
 
     # AI Features
     if show_ai_options:
-        c1, c2 = st.columns(2)
-        doc_id = doc['id']
-        
-        with c1:
-            with st.expander("👶 Simple Summary"):
-                simple_key = f"simple_{doc_id}"
-                if simple_key not in st.session_state.ai_cache:
-                    with st.spinner("Simplifying..."):
-                        p = f"Explain this paper to a non-expert in simple terms:\nTitle: {doc['title']}\nAbstract: {doc['abstract']}"
-                        st.session_state.ai_cache[simple_key] = call_gemini(p)
-                st.write(st.session_state.ai_cache[simple_key])
+        # Check if we have a key before showing AI UI
+        if get_api_key():
+            c1, c2 = st.columns(2)
+            doc_id = doc['id']
+            
+            with c1:
+                with st.expander("👶 Simple Summary"):
+                    simple_key = f"simple_{doc_id}"
+                    if simple_key not in st.session_state.ai_cache:
+                        with st.spinner("Simplifying..."):
+                            p = f"Explain this paper to a non-expert in simple terms:\nTitle: {doc['title']}\nAbstract: {doc['abstract']}"
+                            st.session_state.ai_cache[simple_key] = call_gemini(p)
+                    st.write(st.session_state.ai_cache[simple_key])
 
-        with c2:
-            with st.expander("🧐 Expert Summary"):
-                expert_key = f"expert_{doc_id}"
-                if expert_key not in st.session_state.ai_cache:
-                    with st.spinner("Analyzing..."):
-                        p = f"Provide a technical summary for a domain expert, focusing on methodology and contribution:\nTitle: {doc['title']}\nAbstract: {doc['abstract']}"
-                        st.session_state.ai_cache[expert_key] = call_gemini(p)
-                st.write(st.session_state.ai_cache[expert_key])
+            with c2:
+                with st.expander("🧐 Expert Summary"):
+                    expert_key = f"expert_{doc_id}"
+                    if expert_key not in st.session_state.ai_cache:
+                        with st.spinner("Analyzing..."):
+                            p = f"Provide a technical summary for a domain expert, focusing on methodology and contribution:\nTitle: {doc['title']}\nAbstract: {doc['abstract']}"
+                            st.session_state.ai_cache[expert_key] = call_gemini(p)
+                    st.write(st.session_state.ai_cache[expert_key])
+        else:
+            st.warning("⚠️ AI features paused. Please enter your API Key in the sidebar.")
     
     st.markdown("---")
 
@@ -265,6 +295,10 @@ if page_view == "Search Library":
         st.subheader("🔍 Search")
     with col_ai_toggle:
         ai_mode = st.toggle("✨ AI Mode", value=False)
+    
+    # --- API KEY CHECK LOGIC ---
+    if ai_mode and not get_api_key():
+        st.warning("⚠️ AI Mode enabled but no API Key found. Please configure it in the sidebar.")
 
     # Search Inputs
     c_search, c_sort = st.columns([3, 1])
@@ -310,16 +344,17 @@ if page_view == "Search Library":
         
         # AI Aggregated Summary
         if ai_mode and current_page_results:
-            with st.container():
-                st.markdown("### ✨ AI Overview")
-                cache_key = f"agg_{search_query}_{st.session_state.page}"
-                if cache_key not in st.session_state.ai_cache:
-                    with st.spinner("Synthesizing themes..."):
-                        papers_text = "\n".join([f"- {r['title']}: {r.get('abstract', '')[:200]}..." for r in current_page_results])
-                        prompt = f"Provide a brief, high-level summary of the common themes found in these research papers:\n{papers_text}"
-                        st.session_state.ai_cache[cache_key] = call_gemini(prompt)
-                st.info(st.session_state.ai_cache[cache_key])
-                st.divider()
+            if get_api_key():
+                with st.container():
+                    st.markdown("### ✨ AI Overview")
+                    cache_key = f"agg_{search_query}_{st.session_state.page}"
+                    if cache_key not in st.session_state.ai_cache:
+                        with st.spinner("Synthesizing themes..."):
+                            papers_text = "\n".join([f"- {r['title']}: {r.get('abstract', '')[:200]}..." for r in current_page_results])
+                            prompt = f"Provide a brief, high-level summary of the common themes found in these research papers:\n{papers_text}"
+                            st.session_state.ai_cache[cache_key] = call_gemini(prompt)
+                    st.info(st.session_state.ai_cache[cache_key])
+                    st.divider()
 
         # Render List
         for doc in current_page_results:
@@ -348,13 +383,19 @@ if page_view == "Search Library":
             """, unsafe_allow_html=True)
 
 elif page_view == "My Saved Papers":
-    st.subheader("💾 My Saved Papers")
+    col_saved_header, col_ai_saved = st.columns([4, 1])
+    with col_saved_header:
+        st.subheader("💾 My Saved Papers")
+    with col_ai_saved:
+        ai_mode_saved = st.toggle("✨ AI Mode", value=False)
+
+    # --- API KEY CHECK LOGIC (SAVED VIEW) ---
+    if ai_mode_saved and not get_api_key():
+        st.warning("⚠️ AI Mode enabled but no API Key found. Please configure it in the sidebar.")
     
     if not st.session_state.saved_papers:
         st.write("You haven't saved any papers yet. Go to Search to add some!")
     else:
-        ai_mode_saved = st.toggle("✨ AI Mode (Saved View)", value=False)
-        
         saved_docs = [
             r for r in st.session_state.bib_data["references"] 
             if r["id"] in st.session_state.saved_papers
